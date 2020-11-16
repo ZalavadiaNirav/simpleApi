@@ -1,0 +1,547 @@
+//
+import Foundation
+import UIKit
+import Alamofire
+import MBProgressHUD
+
+struct Response {
+    fileprivate var data: Data
+    init(data: Data) {
+        self.data = data
+    }
+}
+
+extension Response {
+    public func decode<T: Codable>(_ type: T.Type) -> T? {
+        let jsonDecoder = JSONDecoder()
+        
+        do {
+            // process data
+            let response = try jsonDecoder.decode(T.self, from:data)
+            return response
+        } catch let DecodingError.dataCorrupted(context) {
+            print(context)
+        } catch let DecodingError.keyNotFound(key, context) {
+            print("Key '\(key)' not found:", context.debugDescription)
+            print("codingPath:", context.codingPath)
+        } catch let DecodingError.valueNotFound(value, context) {
+            print("Value '\(value)' not found:", context.debugDescription)
+            print("codingPath:", context.codingPath)
+        } catch let DecodingError.typeMismatch(type, context)  {
+            print("Type '\(type)' mismatch:", context.debugDescription)
+            print("codingPath:", context.codingPath)
+        } catch {
+            print("error: ", error)
+        }
+        
+        //        do {
+        //            let response = try jsonDecoder.decode(T.self, from:data)
+        //            return response
+        //        } catch let error {
+        //            return nil
+        //        }
+        return nil
+    }
+}
+
+func newJSONDecoder() -> JSONDecoder {
+    let decoder = JSONDecoder()
+    if #available(iOS 10.0, OSX 10.12, tvOS 10.0, watchOS 3.0, *) {
+        decoder.dateDecodingStrategy = .iso8601
+    }
+    return decoder
+}
+//
+func newJSONEncoder() -> JSONEncoder {
+    let encoder = JSONEncoder()
+    if #available(iOS 10.0, OSX 10.12, tvOS 10.0, watchOS 3.0, *) {
+        encoder.dateEncodingStrategy = .iso8601
+    }
+    return encoder
+}
+
+class Connectivity {
+    class func isConnectedToInternet() ->Bool {
+        return NetworkReachabilityManager()!.isReachable
+    }
+}
+
+class NetworkManager
+{
+    var header: [String : Any] = [:]
+    static var guid = ""
+    static var token = ""
+    
+    static func getFullAppVersion() -> String
+    {
+        let version:String! = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build:String! = Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String
+        let fullAppVersion:String! = "\(version ?? "").\(build ?? "")"
+        return fullAppVersion
+    }
+    
+    static func defaultHeader() -> HTTPHeaders {
+        
+        let objDevice = HeaderModel.shared
+        let userInfo = Authorization.shared.getCurrentUser()
+        
+        if (userInfo?.userToken?.isEmpty==true && guid == "" ){
+            guid = getUUID(forceNewGuid: true)!
+        }
+        
+        if(objDevice.token==nil)
+        {
+            token=userInfo?.userToken ?? "";
+        }
+        print("network = \(token)")
+        // print("network = \(token)")
+        
+        if(guid != "")
+        {
+            guid=UserDefaults.standard.object(forKey: "guid") as! String
+        }
+        
+        // HeaderModel.shared.setDevice("IOS", bundelid: Bundle.main.bundleIdentifier!, osversion: UIDevice.current.systemVersion, manufacturer: "APPLE", modelno: GlobalFunction.deviceModel, apiversion: "v1", usertoken: token, guid: getUUID(forceNewGuid: false)!, appversion:NetworkManager.getFullAppVersion())
+        
+        print("========Header=================== \n\n \(HeaderModel.shared.getDeviceDetails())")
+        
+        return HeaderModel.shared.getDeviceDetails()
+    }
+    
+    
+    class func request<T: Codable>(url: String,method:HTTPMethod,parameters: Dictionary<String, Any>,type: T.Type, completion: @escaping (_ object: T?, _ error: Error?) -> Void) {
+        // Vikas Edit
+        //       let apiurl = baseUrl+url
+        let apiurl = "https://stage.realtydaddy.com/RealtyDaddyMobile/api/Project/GetProjectDetails"
+        
+        //        let apiurl = baseUrl+url
+        //        let apiurl = url
+        
+        print("api url=\(apiurl)")
+        if(method==HTTPMethod.get)
+        {
+            AF.request(apiurl, method: method,parameters: parameters,headers: defaultHeader()).responseJSON
+            {
+                (response) in
+                print(response)
+                
+                
+                let isInternetConnection = Connectivity.isConnectedToInternet()
+                guard isInternetConnection == true else{
+                    let error = NSError.init(domain: "", code:0, userInfo: [NSLocalizedDescriptionKey:"Please Check Internet Connectivity"])
+                    completion(nil,error)
+                    return
+                }
+                
+                guard let statusCode = response.response?.statusCode else {
+                    completion(nil, response.error)
+                    return
+                }
+                
+                switch response.result
+                {
+                case .success(let value):
+                    
+                    if 200...299 ~= statusCode {
+                        //success
+                        guard let data = try? JSONSerialization.data(withJSONObject: value) else {
+                            completion(nil, response.error)
+                            return
+                        }
+                        
+                        let responseM = Response(data: data)
+                        guard let responseModel = responseM.decode(type) else {
+                            completion(nil, response.error)
+                            return
+                        }
+                        completion(responseModel, nil)
+                    }
+                    else
+                    { //Handel other errors
+                        var errorDescription:String = ""
+                        switch statusCode {
+                        case Constants.httpErrorCode.kHttpBadRequest.rawValue:
+                            errorDescription = "Bad Request"
+                        case Constants.httpErrorCode.kHttpUnAuthorized.rawValue:
+                            errorDescription = "UNAuthorized Access"
+                        case Constants.httpErrorCode.kHttpNotFound.rawValue:
+                            errorDescription = "Resource Not Found"
+                        case Constants.httpErrorCode.kHttpTimeOut.rawValue:
+                            errorDescription = "Request Timeout"
+                        case Constants.httpErrorCode.kHttpInternalError.rawValue:
+                            errorDescription = "Internal Error Occur"
+                        //                            case Constants.httpErrorCode.kInvalidIDError.rawValue:
+                        //                                errorDescription = "Invalid Id"
+                        
+                        default:
+                            errorDescription = "Unknown Error"
+                        }
+                        
+                        let error = NSError.init(domain: "", code: statusCode, userInfo: [NSLocalizedDescriptionKey:errorDescription])
+                        completion(nil,error)
+                    }
+                    
+                case .failure(_):
+                    completion(nil,response.error)
+                }
+            }
+        }
+        else
+        {
+            AF.request(apiurl,method: method ,parameters: parameters,
+                       encoding: JSONEncoding.default,
+                       headers: defaultHeader()).validate(statusCode: 200..<600)
+                .responseJSON { response in
+                    print(response)
+                    let isInternetConnection = Connectivity.isConnectedToInternet()
+                    
+                    guard isInternetConnection == true else{
+                        let error = NSError.init(domain: "", code:0, userInfo: [NSLocalizedDescriptionKey:"Please Check Internet Connectivity"])
+                        completion(nil,error)
+                        return
+                    }
+                    
+                    //each response should have a status code and a json value
+                    guard let statusCode = response.response?.statusCode else {
+                        //                            print("1")
+                        completion(nil, response.error)
+                        return
+                    }
+                    
+                    switch response.result
+                    {
+                    case .success(let value):
+                        //                            print("2")
+                        guard let _ = try? JSONSerialization.data(withJSONObject: value) else {
+                            //                                    print("3")
+                            completion(nil, response.error)
+                            return
+                        }
+                        
+                        if 200...299 ~= statusCode {
+                            //success
+                            //                                    print("4")
+                            guard let data1 = try? JSONSerialization.data(withJSONObject: value) else {
+                                //                                        print("5")
+                                completion(nil, response.error)
+                                return
+                            }
+                            
+                            let response1 = Response(data: data1)
+                            //                                    print("6")
+                            guard let decoded1 = response1.decode(type) else {
+                                //                                        print("7")
+                                //                                        catch let DecodingError.typeMismatch(type, decoded1.context)  {
+                                //                                           print("Type '\(type)' mismatch:", context.debugDescription)
+                                //                                           print("codingPath:", context.codingPath)
+                                //                                        }
+                                completion(nil, response.error)
+                                return
+                            }
+                            //                                    print("decoded=\(decoded1)")
+                            completion(decoded1, nil)
+                            
+                        }
+                        else
+                        { //Handel other errors
+                            var errorDescription:String = ""
+                            switch statusCode {
+                            case Constants.httpErrorCode.kHttpBadRequest.rawValue:
+                                errorDescription = "Bad Request"
+                            case Constants.httpErrorCode.kHttpUnAuthorized.rawValue:
+                                errorDescription = "UNAuthorized Access"
+                            case Constants.httpErrorCode.kHttpNotFound.rawValue:
+                                errorDescription = "Resource Not Found"
+                            case Constants.httpErrorCode.kHttpTimeOut.rawValue:
+                                errorDescription = "Request Timeout"
+                            case Constants.httpErrorCode.kHttpInternalError.rawValue:
+                                errorDescription = "Internal Error Occur"
+                            case Constants.httpErrorCode.kInvalidIDError.rawValue:
+                                errorDescription = "Invalid Id"
+                                
+                            default:
+                                errorDescription = "Unknown Error"
+                                
+                            }
+                            
+                            let error = NSError.init(domain: "", code: statusCode, userInfo: [NSLocalizedDescriptionKey:errorDescription])
+                            completion(nil,error)
+                            
+                            
+                            
+                        }
+                    case .failure(let error):
+                        //                                print("9")
+                        completion(nil,error)
+                    }
+                }
+        }
+    }
+    class func requestForNearBySearch<T: Codable>(url: String,method:HTTPMethod,parameters: Dictionary<String, Any>,type: T.Type, completion: @escaping (_ object: T?, _ error: Error?) -> Void) {
+        
+        let apiurl = url
+        print("api url=\(apiurl)")
+        if(method==HTTPMethod.get)
+        {
+            AF.request(apiurl, method: method,parameters: parameters,headers: defaultHeader()).responseJSON
+            {
+                (response) in
+                print(response)
+                
+                
+                let isInternetConnection = Connectivity.isConnectedToInternet()
+                guard isInternetConnection == true else{
+                    let error = NSError.init(domain: "", code:0, userInfo: [NSLocalizedDescriptionKey:"Please Check Internet Connectivity"])
+                    completion(nil,error)
+                    return
+                }
+                
+                guard let statusCode = response.response?.statusCode else {
+                    completion(nil, response.error)
+                    return
+                }
+                
+                switch response.result
+                {
+                case .success(let value):
+                    
+                    if 200...299 ~= statusCode {
+                        //success
+                        guard let data = try? JSONSerialization.data(withJSONObject: value) else {
+                            completion(nil, response.error)
+                            return
+                        }
+                        
+                        let responseM = Response(data: data)
+                        guard let responseModel = responseM.decode(type) else {
+                            completion(nil, response.error)
+                            return
+                        }
+                        completion(responseModel, nil)
+                    }
+                    else
+                    { //Handel other errors
+                        var errorDescription:String = ""
+                        switch statusCode {
+                        case Constants.httpErrorCode.kHttpBadRequest.rawValue:
+                            errorDescription = "Bad Request"
+                        case Constants.httpErrorCode.kHttpUnAuthorized.rawValue:
+                            errorDescription = "UNAuthorized Access"
+                        case Constants.httpErrorCode.kHttpNotFound.rawValue:
+                            errorDescription = "Resource Not Found"
+                        case Constants.httpErrorCode.kHttpTimeOut.rawValue:
+                            errorDescription = "Request Timeout"
+                        case Constants.httpErrorCode.kHttpInternalError.rawValue:
+                            errorDescription = "Internal Error Occur"
+                        //                            case Constants.httpErrorCode.kInvalidIDError.rawValue:
+                        //                                errorDescription = "Invalid Id"
+                        
+                        default:
+                            errorDescription = "Unknown Error"
+                        }
+                        
+                        let error = NSError.init(domain: "", code: statusCode, userInfo: [NSLocalizedDescriptionKey:errorDescription])
+                        completion(nil,error)
+                    }
+                    
+                case .failure(_):
+                    completion(nil,response.error)
+                }
+            }
+        }
+        else
+        {
+            AF.request(apiurl,method: method ,parameters: parameters,
+                       encoding: JSONEncoding.default,
+                       headers: defaultHeader()).validate(statusCode: 200..<600)
+                .responseJSON { response in
+                    print(response)
+                    let isInternetConnection = Connectivity.isConnectedToInternet()
+                    
+                    guard isInternetConnection == true else{
+                        let error = NSError.init(domain: "", code:0, userInfo: [NSLocalizedDescriptionKey:"Please Check Internet Connectivity"])
+                        completion(nil,error)
+                        return
+                    }
+                    
+                    //each response should have a status code and a json value
+                    guard let statusCode = response.response?.statusCode else {
+                        //                            print("1")
+                        completion(nil, response.error)
+                        return
+                    }
+                    
+                    switch response.result
+                    {
+                    case .success(let value):
+                        //                            print("2")
+                        guard let _ = try? JSONSerialization.data(withJSONObject: value) else {
+                            //                                    print("3")
+                            completion(nil, response.error)
+                            return
+                        }
+                        
+                        if 200...299 ~= statusCode {
+                            //success
+                            //                                    print("4")
+                            guard let data1 = try? JSONSerialization.data(withJSONObject: value) else {
+                                //                                        print("5")
+                                completion(nil, response.error)
+                                return
+                            }
+                            
+                            let response1 = Response(data: data1)
+                            //                                    print("6")
+                            guard let decoded1 = response1.decode(type) else {
+                                //                                        print("7")
+                                //                                        catch let DecodingError.typeMismatch(type, decoded1.context)  {
+                                //                                           print("Type '\(type)' mismatch:", context.debugDescription)
+                                //                                           print("codingPath:", context.codingPath)
+                                //                                        }
+                                completion(nil, response.error)
+                                return
+                            }
+                            //                                    print("decoded=\(decoded1)")
+                            completion(decoded1, nil)
+                            
+                        }
+                        else
+                        { //Handel other errors
+                            var errorDescription:String = ""
+                            switch statusCode {
+                            case Constants.httpErrorCode.kHttpBadRequest.rawValue:
+                                errorDescription = "Bad Request"
+                            case Constants.httpErrorCode.kHttpUnAuthorized.rawValue:
+                                errorDescription = "UNAuthorized Access"
+                            case Constants.httpErrorCode.kHttpNotFound.rawValue:
+                                errorDescription = "Resource Not Found"
+                            case Constants.httpErrorCode.kHttpTimeOut.rawValue:
+                                errorDescription = "Request Timeout"
+                            case Constants.httpErrorCode.kHttpInternalError.rawValue:
+                                errorDescription = "Internal Error Occur"
+                            case Constants.httpErrorCode.kInvalidIDError.rawValue:
+                                errorDescription = "Invalid Id"
+                                
+                            default:
+                                errorDescription = "Unknown Error"
+                                
+                            }
+                            
+                            let error = NSError.init(domain: "", code: statusCode, userInfo: [NSLocalizedDescriptionKey:errorDescription])
+                            completion(nil,error)
+                            
+                            
+                            
+                        }
+                    case .failure(let error):
+                        //                                print("9")
+                        completion(nil,error)
+                    }
+                }
+        }
+    }
+    
+}
+/*
+ func callSearchProject(filterOptionProject:[AnyHashable:Any]?,start:Int,sortingIndexValue:Int,nxt:Int) {
+        
+        if filterOptionProject != nil {
+            apiParams = filterOptionProject as! [String : Any]
+        } else {
+            
+            //            apiParams["category_type"] = NSNumber(value: categoryId)
+            // apiParams["search_type"] = NSNumber(value: searchType)
+        }
+        
+        apiParams["start"] = NSNumber(value: start)
+        apiParams["sort"] = NSNumber(value:sortingIndexValue)
+        apiParams["next"] = NSNumber(value: nxt)
+        
+   
+        
+        NetworkManager.request(url:APIEndPoints.SearchProject_Api.rawValue, method: HTTPMethod.post,parameters: apiParams, type:ProjectListAPIModel.self, completion: { (response , Error) in
+            
+            print("response1 =\(String(describing: response))")
+            guard Error == nil else
+            {
+                //                GlobalFunction.showSnackBar(msg:Error?.localizedDescription ?? "Unknown Error")
+                self.reloadSearchProjectList(false,Error?.localizedDescription)
+                return
+            }
+            
+            guard response?.data != nil else
+            {
+                print("respo=\(String(describing: response?.data))")
+                self.reloadSearchProjectList(false,nil)
+                return
+            }
+            guard response?.status == 1 else
+            {
+                // api return
+                self.reloadSearchProjectList(false,response?.messages?[0].message ?? "api return error")
+                return
+            }
+            
+            self.objSearchProjectM = response?.data?.items
+            print("dataR=\(self.objSearchProjectM)")
+            self.reloadSearchProjectList(true,nil)
+            
+        })
+    }
+*/
+
+
+/* call
+func callWstoGetProjectList(isPullToRefresh:Bool)
+    {
+        if(isPullToRefresh==false)
+        {
+            let hud = MBProgressHUD.showAdded(to: view, animated: true)
+            hud?.mode = MBProgressHUDMode.indeterminate
+            hud?.labelText = "Loading"
+        }
+        
+       //temp static
+        projectParamDict = [
+            "start": 1,
+            "search_type": 58,
+            "city": 1,
+            "category_type": 18,
+            "sort": 1, //sortSelectedIndex,
+            "next": 10,
+            "location_ids": ["189"]
+        ]
+        
+        self.searchProjectDelegate?.callSearchProject(filterOptionProject:projectParamDict, start:start, sortingIndexValue:sortSelectedIndex, nxt:nextPage)
+        viewModel.reloadSearchProjectList = { (sucess,errorMsg) in
+            if sucess
+            {
+                self.viewForNoDataFound.isHidden = true
+                self.projectTbl.reloadData()
+            }
+            else
+            {
+                self.viewForNoDataFound.isHidden = false
+                self.projectTbl.backgroundView = self.viewForNoDataFound
+                //handel fail scenario
+                GlobalFunction.showSnackBar(msg:errorMsg ?? Messages.myPropertyFailed)
+                //  self.viewForNotDataFound.isHidden = false
+                self.projectTbl.reloadData()
+            }
+            
+            if(isPullToRefresh == false)
+            {
+                DispatchQueue.main.async {
+                    MBProgressHUD.hide(for: self.view, animated: true)
+                }
+            }
+            else
+            {
+                self.refreshControl?.endRefreshing()
+                self.isPullToRefresh=false
+            }
+        }
+    }
+    */
+
+
