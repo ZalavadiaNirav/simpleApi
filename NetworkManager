@@ -443,6 +443,8 @@ class NetworkManager
     
 }
 /*
+    var reloadSearchProjectList : (Bool,String?) -> () = { (_,_) in }
+
  func callSearchProject(filterOptionProject:[AnyHashable:Any]?,start:Int,sortingIndexValue:Int,nxt:Int) {
         
         if filterOptionProject != nil {
