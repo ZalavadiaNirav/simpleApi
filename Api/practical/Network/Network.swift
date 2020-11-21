@@ -11,9 +11,9 @@ class Network
 {
     static let shared = Network()
     
-    func getData(description: String, location: String, completion: @escaping (Result<[Results], ErrorMessage>) -> Void)
+    func getData<T: Codable>(description: String, location: String,type:T.Type, completion: @escaping (Result<T, ErrorMessage>) -> Void)
     {
-        let urlString = "https://jobs.github.com/positions.json?description=\(description.replacingOccurrences(of: " ", with: "+"))&location=\(location.replacingOccurrences(of: " ", with: "+"))"
+        let urlString = "https://itunes.apple.com/search?term=\(description.replacingOccurrences(of: " ", with: "+"))&location=\(location.replacingOccurrences(of: " ", with: "+"))"
         guard let url = URL(string: urlString) else {return}
         
         let task = URLSession.shared.dataTask(with: url) { (data, response, error) in
@@ -28,24 +28,52 @@ class Network
                 completion(.failure(.invalidResponse))
                 return
             }
-            guard data == data else {
+            guard let data1 = data else {
                 completion(.failure(.invalidData))
                 return
-                
             }
-            do {
-                let decoder = JSONDecoder()
-//                decoder.keyDecodingStrategy = .convertFromSnakeCase
-                let results = try decoder.decode([Results].self, from:data!)
-                completion(.success(results))
-            } catch
-            {
-                completion(.failure(.invalidData))
+            let responseM = Response(data:data1)
+            guard let responseModel = responseM.decode(type) else {
+                completion(.failure(.invalidResponse))
+                return
             }
+            completion(.success(responseModel))
             
         }
         task.resume()
     }
     
-    
+}
+
+struct Response {
+    fileprivate var data: Data
+    init(data: Data) {
+        self.data = data
+    }
+}
+
+extension Response {
+    public func decode<T: Codable>(_ type: T.Type) -> T? {
+        let jsonDecoder = JSONDecoder()
+        
+        do {
+            let response = try jsonDecoder.decode(T.self, from:data)
+            return response
+        } catch let DecodingError.dataCorrupted(context) {
+            print(context)
+        } catch let DecodingError.keyNotFound(key, context) {
+            print("Key '\(key)' not found:", context.debugDescription)
+            print("codingPath:", context.codingPath)
+        } catch let DecodingError.valueNotFound(value, context) {
+            print("Value '\(value)' not found:", context.debugDescription)
+            print("codingPath:", context.codingPath)
+        } catch let DecodingError.typeMismatch(type, context)  {
+            print("Type '\(type)' mismatch:", context.debugDescription)
+            print("codingPath:", context.codingPath)
+        } catch {
+            print("error: ", error)
+        }
+        
+        return nil
+    }
 }

@@ -9,6 +9,8 @@ import UIKit
 
 class ViewController: UIViewController {
     
+    var arr:[Results]?
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         self.callToGetData()
@@ -16,10 +18,12 @@ class ViewController: UIViewController {
 
     func callToGetData()
     {
-        Network.shared.getData(description: "Software Developer", location: "San Francisco") { result in
+        Network.shared.getData(description: "Jhon", location: "50", type: AlbumModel.self) { result in
             switch result{
-            case .success(let results):
-                print(results)
+            case .success(let res):
+                self.arr = [Results]()
+                self.arr = res.results
+                print(self.arr)
             case .failure(let msg):
                 print(msg)
             }
